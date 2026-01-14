@@ -136,6 +136,82 @@ DNA 地圖是本系統的靈魂，定義了跨世代二進位文件的內容定�
 
 
 
+[技術白皮書補遺：核心組件實作規範]
+
+3.3 基於 Wimgapi/wimlib 的映像解構與流式提取
+
+ * 機制 (Mechanism)：
+   * 無掛載提取 (Mountless Extraction)：本架構捨棄傳統 DISM 需掛載 VHDX/WIM 之繁瑣流程，改採 wimlib 進行底層映像掃描。這允許腳本在「不提權、不佔用掛載點」的情況下，直接從映像檔中流式提取（Streaming）特定雜湊值的二進位組件。
+   * LWM 格式優化：透過 wimlib 處理 LWM (Linked WIM) 格式，實現跨多個 Windows 版本（如同時保留 Windows 7 與 Windows 11 組件）的單一實例儲存（Single-Instance Storage），將多版本共存的冗餘空間占用降至最低。
+
+
+4.1 DNA Maps：基於雜湊的二進位識別與元數據索引
+
+ * 構建邏輯 (Construction Logic)：
+   * 唯一鍵值生成 (Primary Key)：為了解決文件名相同但補丁版本不同的衝突，DNA Maps 採用 PE 標頭中的元數據作為索引鍵：
+     DNA_Key = Hex(IMAGE_OPTIONAL_HEADER.TimeDateStamp) + Hex(IMAGE_OPTIONAL_HEADER.SizeOfImage) [^9]。此組合在 Windows 生態系中具備極高的碰撞抵抗力，能精確定位特定補丁等級的組件。
+   * 逆向索引與資源解耦：DNA Maps 不僅記錄檔案路徑，更紀錄該檔案在 LCU（累積更新）或原始 WIM 映像中的分段位移 (Offset) 與壓縮區塊 (Chunk) 資訊。
+
+
+
+​DNA Maps 在本架構中實際上承擔以下三項核心任務：
+
+​消除版本歧義 (De-aliasing)：
+
+​任務：Windows 系統中存在大量同名但字節（Byte）完全不同的檔案（例如 Windows 10 各個補丁版本的 kernel32.dll）。
+​實作：DNA Maps 放棄檔案路徑索引，改採 內容定址 (Content-Addressing)。透過計算 Hex(Timestamp) + Hex(SizeOfImage) [^9] 生成唯一的 DNA 序列號。這確保了 ProjFS 在投影時，絕不會因為檔案同名而誤載錯誤版本的系統邏輯。
+
+​映像檔內容解耦 (Decoupling From WIM/ESD)：
+
+​任務：讓系統不再依賴「整個」映像檔，而是將映像檔視為一個組件資源池。
+​實作：DNA Maps 紀錄了特定組件在壓縮包（WIM/ESD）中的 區塊位移 (Block Offset) 與 壓縮演算法參數。配合 wimlib 的流式處理能力，系統可以直接「抽取出」所需的特定 DLL，而無需解壓整個 5GB 的 install.wim。
+
+​橫向演化追蹤 (Evolutionary Tracking)：
+
+​任務：建立跨時代的組件關聯。
+​實作：地圖中包含「演化路徑」，例如記錄某個 Windows 7 的特定功能組件在 Windows 11 中對應的替代檔。這使得 SDOS 能夠在投影層自動完成「環境補丁」，實現舊版軟體在現代內核上的無感寄生。
+
+
+
+
+
+
+[Whitepaper Addendum: Core Component Implementation Specifications]
+
+3.3 wimlib-based Image Deconstruction and Streaming Extraction
+
+ * Mechanism:
+   * Mountless Extraction: This architecture abandons the cumbersome traditional DISM process which requires mounting VHDX/WIM files. Instead, it utilizes wimlib for low-level image scanning. This allows scripts to perform Streaming Extraction of binary components with specific hash values directly from image files without requiring administrative privileges or occupying mount points.
+   * LWM Format Optimization: By leveraging wimlib to handle LWM (Linked WIM) formats, the system achieves Single-Instance Storage (SIS) across multiple Windows versions (e.g., simultaneously retaining Windows 7 and Windows 11 components). This minimizes the redundant storage footprint typically caused by multi-version coexistence.
+
+4.1 DNA Maps: Hash-based Binary Identification and Metadata Indexing
+
+ * Construction Logic:
+   * Primary Key Generation: To resolve conflicts where different patch versions share the same filename, DNA Maps utilizes metadata from the PE header as the index key:
+     
+     [^9]
+     This combination offers extremely high collision resistance within the Windows ecosystem, enabling the precise localization of components at specific patch levels.
+   * Reverse Indexing and Resource Decoupling: DNA Maps record more than just file paths; they document the Block Offset and Compression Chunk information of the file within an LCU (Latest Cumulative Update) or the original WIM image.
+
+4.2 Core Missions of DNA Maps
+
+In this architecture, DNA Maps fulfill three primary missions:
+
+ * De-aliasing (Version Conflict Resolution):
+
+   * Task: Windows systems contain numerous files with identical names but entirely different byte content (e.g., various patched versions of kernel32.dll in Windows 10).
+   * Implementation: DNA Maps discard file-path-based indexing in favor of Content-Addressing. By generating a unique DNA serial number via the Hex(Timestamp) + Hex(SizeOfImage) formula, the system ensures that ProjFS never misloads an incorrect version of system logic due to filename collisions.
+
+ * Decoupling from WIM/ESD Content:
+
+   * Task: To shift the system away from depending on the "entire" image file, treating it instead as a Component Resource Pool.
+   * Implementation: DNA Maps store the specific Block Offset and compression algorithm parameters for each component within the compressed package (WIM/ESD). Combined with the streaming capabilities of wimlib, the system can "extract" specific required DLLs on-the-fly without decompressing the entire 5GB install.wim.
+
+ * Evolutionary Tracking:
+
+   * Task: Establishing component relationships across different eras of Windows.
+   * Implementation: The maps include "Evolutionary Paths," such as mapping a specific functional component from Windows 7 to its corresponding replacement in Windows 11. This allows SDOS to automatically apply "environment patches" at the projection layer, enabling legacy software to achieve Seamless Parasitism on a modern kernel.
+
 
 
 
